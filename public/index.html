@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Team Vector | Bot Dashboard</title>
+  <style>
+    :root { color-scheme: dark; --bg:#07080c; --panel:#11131b; --line:#292d3a; --red:#ff3152; --muted:#9ba2b4; }
+    * { box-sizing:border-box; }
+    body { margin:0; min-height:100vh; background:radial-gradient(circle at 80% 0%,#24101a 0,transparent 35%),var(--bg); color:#f4f5f8; font:15px/1.5 Arial,sans-serif; }
+    main { width:min(900px,92%); margin:64px auto; }
+    header { border-bottom:1px solid var(--line); padding-bottom:24px; margin-bottom:28px; }
+    .tag { color:var(--red); font-size:12px; font-weight:700; letter-spacing:3px; }
+    h1 { margin:8px 0; font-size:clamp(32px,6vw,52px); letter-spacing:-2px; }
+    p { color:var(--muted); }
+    .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:16px; }
+    section { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:22px; }
+    h2 { margin:0 0 12px; font-size:18px; }
+    .status { display:inline-flex; align-items:center; gap:9px; color:#ffd6dd; background:#32131d; border:1px solid #692438; padding:7px 11px; border-radius:99px; font-size:13px; }
+    .dot { width:8px; height:8px; border-radius:50%; background:var(--red); }
+    code { color:#ffb3c0; background:#080a10; padding:3px 6px; border-radius:5px; }
+    .notice { border-left:3px solid var(--red); padding:12px 14px; background:#171019; border-radius:0 8px 8px 0; }
+    a { color:#ff8297; }
+    footer { margin-top:28px; color:#707789; font-size:12px; }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="tag">TEAM VECTOR / CONTROL PANEL</div>
+    <h1>Bot Dashboard</h1>
+    <p>Deployment information and command reference.</p>
+    <span class="status"><span class="dot"></span> Status is not connected to the bot process</span>
+  </header>
+  <div class="grid">
+    <section>
+      <h2>Deployment</h2>
+      <p>This page is hosted by Vercel. The Discord bot process must run separately on a persistent Python host.</p>
+    </section>
+    <section>
+      <h2>Prefix</h2>
+      <p>Bot prefix: <code>-!</code></p>
+      <p>Commands: <code>-!kick</code>, <code>-!ban</code>, <code>-!mute</code>, <code>-!time</code>.</p>
+    </section>
+    <section>
+      <h2>Token configuration</h2>
+      <p>Set <code>DISCORD_TOKEN</code> in the bot host's private Environment Variables settings.</p>
+      <p>For local testing, copy <code>.env.example</code> to <code>.env</code> and add your token there.</p>
+    </section>
+  </div>
+  <section style="margin-top:16px">
+    <h2>Security notice</h2>
+    <div class="notice">Do not paste your bot token into this webpage or commit it to GitHub. This static dashboard cannot securely write Vercel environment variables or start a persistent Discord gateway connection.</div>
+  </section>
+  <footer>TEAM VECTOR · BOT CONTROL PANEL</footer>
+</main>
+</body>
+</html>
