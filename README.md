@@ -1,40 +1,63 @@
-# Team Vector Discord Bot + Vercel Dashboard
+# Vectra Discord bot
 
-## Project layout
+Vectra is a Python moderation and support bot with a static Vercel dashboard. The bot and dashboard are separate services: Vercel serves the HTML, while the Discord gateway bot runs continuously on a persistent Python host.
 
-- `main.py` — Discord bot (runs as a persistent Python process).
-- `public/index.html` — static dashboard page for Vercel.
-- `requirements.txt` — Python dependencies.
-- `.env.example` — template for local secrets.
-- `.gitignore` — prevents `.env` from being committed.
+## Features
 
-## Important hosting note
+- Slash commands for warnings, warning history, clearing warnings, mute/timeout, kick, ban, unban, bulk purge, slowmode, lock, and unlock.
+- Persistent SQLite warning history and per-server configuration.
+- Ticket panels with persistent buttons, private ticket channels, staff access, and close controls.
+- Five independently configurable log destinations: moderation, messages, members, roles, and channels.
+- Logs for edited/deleted messages, member joins/leaves and role changes, role create/update/delete, channel create/update/delete, and moderation actions.
+- Responsive static dashboard with command reference, setup instructions, ticket overview, and a browser-local log-channel preview.
 
-Vercel can host the static dashboard, but Vercel Functions are not a suitable place to run a normal always-connected `discord.py` bot using `bot.run()`. Run `main.py` on a persistent Python host.
+## Run the bot
 
-## Configure the bot token
+1. Create a bot application in the [Discord Developer Portal](https://discord.com/developers/applications).
+2. Enable **Server Members Intent** and **Message Content Intent** under Bot settings.
+3. Invite the bot with the `bot` and `applications.commands` OAuth scopes. Grant only the permissions it needs: View Channels, Send Messages, Manage Messages, Manage Channels, Kick Members, Ban Members, and Moderate Members.
+4. Install Python 3.10 or newer and run:
 
-### Local computer
-1. Copy `.env.example` to `.env`.
-2. Put your token after `DISCORD_TOKEN=`.
-3. Install dependencies: `pip install -r requirements.txt`.
-4. Run: `python main.py`.
+   ```sh
+   pip install -r requirements.txt
+   ```
 
-### Persistent bot host
-Add an environment variable named `DISCORD_TOKEN` in that host's dashboard, then deploy/restart the bot.
+5. Set `DISCORD_TOKEN` in the host's private environment settings. For local work, create `.env` (never commit it):
 
-### Vercel dashboard
-Import this repository into Vercel. The `public/index.html` page is a static dashboard. It does not accept or store bot tokens.
+   ```env
+   DISCORD_TOKEN=your_bot_token
+   # Optional; defaults to ./vectra.sqlite3
+   VECTRA_DB_PATH=vectra.sqlite3
+   ```
 
-## GitHub upload
+6. Start the persistent process:
 
-```powershell
-git init
-git add .
-git commit -m "Initial Team Vector bot dashboard"
-git branch -M main
-git remote add origin https://github.com/USERNAME/REPOSITORY.git
-git push -u origin main
-```
+   ```sh
+   python main.py
+   ```
 
-Never commit `.env`. If a token is exposed, reset it in the Discord Developer Portal.
+Keep `vectra.sqlite3` on persistent storage. It contains warnings and server configuration. Back it up with the host's normal database or disk backup process.
+
+## Configure a server
+
+- Use `/setup-logs` and select a category and destination channel. Categories: moderation, messages, members, roles, and channels. Omit the channel to disable a category.
+- Use `/logs` to review destinations.
+- Run `/ticket-panel` in the channel where members should contact staff; choose an optional ticket category.
+- Place Vectra's role above the roles it needs to moderate. Its ticket flow grants staff access to roles with **Manage Channels**.
+- Configure `Manage Server`, moderation, and channel permissions for the appropriate staff roles.
+
+Slash commands sync on startup. Discord can take a short time to show global commands after first deploy.
+
+## Deploy the dashboard on Vercel
+
+Import the repository into Vercel with the project root as the root directory. Vercel serves the static site from `public/`. No bot token or environment variable is needed for this dashboard.
+
+## Hosting limitation
+
+Vercel Functions are short-lived and cannot hold the persistent Discord gateway connection required by this bot. Host `main.py` on an always-on worker (for example, a VPS or persistent Python worker service) and keep Vercel for the dashboard. The current dashboard is informational and its channel preview is saved only in the browser; real bot configuration is applied with Discord slash commands. Discord OAuth and a remote configuration API are not included.
+
+## Security
+
+- Never put a Discord token in HTML, browser storage, GitHub, or client-side environment variables.
+- `.env` and SQLite database files are excluded from Git.
+- Reset the bot token in Discord Developer Portal if it is exposed.
