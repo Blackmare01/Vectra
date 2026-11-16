@@ -48,7 +48,7 @@ Keep `data/vectra.sqlite3` on persistent storage. It contains warnings and serve
 - Place Vectra's role above the roles it needs to moderate. Its ticket flow grants staff access to roles with **Manage Channels**.
 - Configure `Manage Server`, moderation, and channel permissions for the appropriate staff roles.
 
-Slash commands sync on startup. Discord can take a short time to show global commands after first deploy.
+Slash commands sync on startup. Discord can take a short time to show global commands after first deploy. Use `/help` or `!help` to see the available commands in Discord.
 
 ## Prefix commands
 

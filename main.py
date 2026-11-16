@@ -140,6 +140,15 @@ async def prefix_help(ctx: commands.Context):
     await ctx.send(embed=embed)
 
 
+@bot.tree.command(name="help", description="Show Vectra's command list")
+async def slash_help(interaction: discord.Interaction):
+    embed = discord.Embed(title="Vectra commands", description="Use a slash command or its `!` prefix equivalent.", color=BRAND)
+    embed.add_field(name="Moderation", value="`/warn`, `/warnings`, `/clear-warnings`, `/mute`, `/timeout`, `/untimeout`, `/kick`, `/ban`, `/unban`, `/purge`, `/slowmode`, `/lock`, `/unlock`", inline=False)
+    embed.add_field(name="Tickets & logs", value="`/ticket-panel`, `/setup-logs`, `/logs`, `/link-filter`", inline=False)
+    embed.add_field(name="Prefix help", value="Run `!help` for the prefix command list. Configure invite filtering with `!linkfilter on [minutes]`.", inline=False)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
 @bot.command(name="linkfilter")
 @commands.has_permissions(manage_guild=True)
 async def prefix_link_filter(ctx: commands.Context, mode: Optional[str] = None, minutes: Optional[int] = None):
