@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -36,6 +37,10 @@ with db() as con:
             user_id INTEGER NOT NULL, moderator_id INTEGER NOT NULL, reason TEXT NOT NULL,
             created_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS automod_settings (
+            guild_id INTEGER PRIMARY KEY, invite_filter INTEGER NOT NULL DEFAULT 0,
+            timeout_minutes INTEGER NOT NULL DEFAULT 10
+        );
     """)
 
 
@@ -50,6 +55,7 @@ LOG_FIELDS = {
     "moderation": "mod_log", "messages": "message_log", "members": "member_log",
     "roles": "role_log", "channels": "channel_log",
 }
+INVITE_LINK = re.compile(r"(?i)(?:https?://)?(?:www\.)?(?:discord\.gg/[a-z0-9-]+|discord(?:app)?\.com/invite/[a-z0-9-]+)")
 
 
 def setting(guild_id: int, key: str):
@@ -62,6 +68,19 @@ def set_setting(guild_id: int, key: str, value: Optional[int]):
     with db() as con:
         con.execute("INSERT OR IGNORE INTO settings(guild_id) VALUES(?)", (guild_id,))
         con.execute(f"UPDATE settings SET {key}=? WHERE guild_id=?", (value, guild_id))
+
+
+def invite_filter_settings(guild_id: int):
+    with db() as con:
+        row = con.execute("SELECT invite_filter,timeout_minutes FROM automod_settings WHERE guild_id=?", (guild_id,)).fetchone()
+        return (bool(row["invite_filter"]), row["timeout_minutes"]) if row else (False, 10)
+
+
+def set_invite_filter(guild_id: int, enabled: bool, minutes: int):
+    with db() as con:
+        con.execute("INSERT INTO automod_settings(guild_id,invite_filter,timeout_minutes) VALUES(?,?,?) "
+                    "ON CONFLICT(guild_id) DO UPDATE SET invite_filter=excluded.invite_filter, timeout_minutes=excluded.timeout_minutes",
+                    (guild_id, int(enabled), minutes))
 
 
 async def log(guild: discord.Guild, key: str, title: str, detail: str, color: int = BRAND):
@@ -83,6 +102,18 @@ async def moderation_log(guild: discord.Guild, title: str, member: discord.abc.U
         await channel.send(embed=moderation_embed(title, member, moderator, reason))
 
 
+def prefix_hierarchy_error(ctx: commands.Context, member: discord.Member) -> Optional[str]:
+    if member.id == ctx.author.id:
+        return "You cannot apply this action to yourself."
+    if member.id == ctx.guild.owner_id:
+        return "The server owner cannot be moderated."
+    if member.top_role >= ctx.author.top_role and ctx.author.id != ctx.guild.owner_id:
+        return "Your highest role must be above the target's role."
+    if member.top_role >= ctx.guild.me.top_role:
+        return "Vectra's highest role must be above the target's role."
+    return None
+
+
 def hierarchy_check(interaction: discord.Interaction, member: discord.Member):
     if member.id == interaction.user.id:
         raise app_commands.AppCommandError("You cannot apply this action to yourself.")
@@ -99,6 +130,226 @@ async def ephemeral(interaction: discord.Interaction, text: str):
         await interaction.followup.send(text, ephemeral=True)
     else:
         await interaction.response.send_message(text, ephemeral=True)
+
+
+@bot.command(name="help")
+async def prefix_help(ctx: commands.Context):
+    embed = discord.Embed(title="Vectra commands", description="Use slash commands or prefix commands starting with `!`.", color=BRAND)
+    embed.add_field(name="Moderation", value="`!warn`, `!warnings`, `!clear-warnings`, `!mute`, `!timeout`, `!untimeout`, `!kick`, `!ban`, `!unban`, `!purge`, `!slowmode`, `!lock`, `!unlock`, `!linkfilter`", inline=False)
+    embed.add_field(name="Tickets & logs", value="`!ticket-panel`, `!setup-logs`, `!logs`", inline=False)
+    await ctx.send(embed=embed)
+
+
+@bot.command(name="linkfilter")
+@commands.has_permissions(manage_guild=True)
+async def prefix_link_filter(ctx: commands.Context, mode: Optional[str] = None, minutes: Optional[int] = None):
+    enabled, current_minutes = invite_filter_settings(ctx.guild.id)
+    if mode is None or mode.lower() == "status":
+        await ctx.send(f"Discord invite filter is **{'ON' if enabled else 'OFF'}**. Timeout: **{current_minutes} minutes**. Use `!linkfilter on [minutes]` or `!linkfilter off`.")
+        return
+    if mode.lower() not in ("on", "off"):
+        await ctx.send("Use `!linkfilter on [minutes]`, `!linkfilter off`, or `!linkfilter status`.")
+        return
+    timeout_minutes = minutes if minutes is not None else current_minutes
+    if not 1 <= timeout_minutes <= 40320:
+        await ctx.send("Timeout duration must be between 1 and 40320 minutes.")
+        return
+    set_invite_filter(ctx.guild.id, mode.lower() == "on", timeout_minutes)
+    await ctx.send(f"Discord invite filter is now **{'ON' if mode.lower() == 'on' else 'OFF'}**. Timeout: **{timeout_minutes} minutes**.")
+
+
+@bot.tree.command(name="link-filter", description="Configure automatic Discord invite link deletion and timeout")
+@app_commands.describe(enabled="Delete Discord invite links and timeout their sender", timeout_minutes="Timeout duration when an invite is posted")
+@app_commands.checks.has_permissions(manage_guild=True)
+async def slash_link_filter(interaction: discord.Interaction, enabled: bool, timeout_minutes: app_commands.Range[int, 1, 40320] = 10):
+    set_invite_filter(interaction.guild_id, enabled, timeout_minutes)
+    status = "enabled" if enabled else "disabled"
+    await ephemeral(interaction, f"Discord invite filter {status}. Timeout duration: **{timeout_minutes} minutes**.")
+
+
+@bot.command(name="warn")
+@commands.has_permissions(moderate_members=True)
+async def prefix_warn(ctx: commands.Context, member: discord.Member, *, reason: str = "No reason provided"):
+    error = prefix_hierarchy_error(ctx, member)
+    if error:
+        await ctx.send(error)
+        return
+    with db() as con:
+        cur = con.execute("INSERT INTO warnings(guild_id,user_id,moderator_id,reason,created_at) VALUES(?,?,?,?,?)",
+                          (ctx.guild.id, member.id, ctx.author.id, reason[:1000], datetime.now(timezone.utc).isoformat()))
+    await ctx.send(f"⚠️ Warned {member.mention}. Warning **#{cur.lastrowid}** recorded.")
+    await moderation_log(ctx.guild, "Member warned", member, ctx.author, reason)
+
+
+@bot.command(name="warnings")
+@commands.has_permissions(moderate_members=True)
+async def prefix_warnings(ctx: commands.Context, member: discord.Member):
+    with db() as con:
+        rows = con.execute("SELECT id,moderator_id,reason,created_at FROM warnings WHERE guild_id=? AND user_id=? ORDER BY id DESC LIMIT 10", (ctx.guild.id, member.id)).fetchall()
+    embed = discord.Embed(title=f"Warnings · {member}", color=BRAND)
+    embed.description = "\n".join(f"**#{r['id']}** · <@{r['moderator_id']}> · {discord.utils.escape_markdown(r['reason'])[:220]} · <t:{int(datetime.fromisoformat(r['created_at']).timestamp())}:R>" for r in rows) or "No warnings found."
+    await ctx.send(embed=embed)
+
+
+@bot.command(name="clear-warnings")
+@commands.has_permissions(moderate_members=True)
+async def prefix_clear_warnings(ctx: commands.Context, member: discord.Member):
+    with db() as con:
+        cur = con.execute("DELETE FROM warnings WHERE guild_id=? AND user_id=?", (ctx.guild.id, member.id))
+    await ctx.send(f"Cleared **{cur.rowcount}** warning(s) for {member.mention}.")
+    await moderation_log(ctx.guild, "Warnings cleared", member, ctx.author, f"{cur.rowcount} warning(s) cleared")
+
+
+@bot.command(name="mute")
+@commands.has_permissions(moderate_members=True)
+async def prefix_mute(ctx: commands.Context, member: discord.Member, minutes: int, *, reason: str = "No reason provided"):
+    error = prefix_hierarchy_error(ctx, member)
+    if error:
+        await ctx.send(error)
+        return
+    if not 1 <= minutes <= 40320:
+        await ctx.send("Duration must be between 1 and 40320 minutes.")
+        return
+    await member.timeout(timedelta(minutes=minutes), reason=reason)
+    await ctx.send(f"Muted {member.mention} for **{minutes} minutes**.")
+    await moderation_log(ctx.guild, "Member muted", member, ctx.author, f"{minutes} minutes · {reason}")
+
+
+@bot.command(name="timeout")
+@commands.has_permissions(moderate_members=True)
+async def prefix_timeout(ctx: commands.Context, member: discord.Member, minutes: int, *, reason: str = "No reason provided"):
+    error = prefix_hierarchy_error(ctx, member)
+    if error:
+        await ctx.send(error)
+        return
+    if not 1 <= minutes <= 40320:
+        await ctx.send("Duration must be between 1 and 40320 minutes.")
+        return
+    await member.timeout(timedelta(minutes=minutes), reason=reason)
+    await ctx.send(f"Timed out {member.mention} for **{minutes} minutes**.")
+    await moderation_log(ctx.guild, "Member timed out", member, ctx.author, f"{minutes} minutes · {reason}")
+
+
+@bot.command(name="untimeout")
+@commands.has_permissions(moderate_members=True)
+async def prefix_untimeout(ctx: commands.Context, member: discord.Member, *, reason: str = "No reason provided"):
+    error = prefix_hierarchy_error(ctx, member)
+    if error:
+        await ctx.send(error)
+        return
+    await member.timeout(None, reason=reason)
+    await ctx.send(f"Timeout removed for {member.mention}.")
+    await moderation_log(ctx.guild, "Timeout removed", member, ctx.author, reason)
+
+
+@bot.command(name="kick")
+@commands.has_permissions(kick_members=True)
+async def prefix_kick(ctx: commands.Context, member: discord.Member, *, reason: str = "No reason provided"):
+    error = prefix_hierarchy_error(ctx, member)
+    if error:
+        await ctx.send(error)
+        return
+    await member.kick(reason=reason)
+    await ctx.send(f"Kicked **{member}**.")
+    await moderation_log(ctx.guild, "Member kicked", member, ctx.author, reason)
+
+
+@bot.command(name="ban")
+@commands.has_permissions(ban_members=True)
+async def prefix_ban(ctx: commands.Context, member: discord.Member, *, reason: str = "No reason provided"):
+    error = prefix_hierarchy_error(ctx, member)
+    if error:
+        await ctx.send(error)
+        return
+    await ctx.guild.ban(member, reason=reason)
+    await ctx.send(f"Banned **{member}**.")
+    await moderation_log(ctx.guild, "Member banned", member, ctx.author, reason)
+
+
+@bot.command(name="unban")
+@commands.has_permissions(ban_members=True)
+async def prefix_unban(ctx: commands.Context, user_id: int, *, reason: str = "No reason provided"):
+    try:
+        user = await bot.fetch_user(user_id)
+        await ctx.guild.unban(user, reason=reason)
+    except discord.NotFound:
+        await ctx.send("That user is not banned, or the ID is invalid.")
+        return
+    await ctx.send(f"Unbanned **{user}**.")
+    await moderation_log(ctx.guild, "Member unbanned", user, ctx.author, reason)
+
+
+@bot.command(name="purge")
+@commands.has_permissions(manage_messages=True)
+async def prefix_purge(ctx: commands.Context, amount: int, member: Optional[discord.Member] = None):
+    if not 1 <= amount <= 100:
+        await ctx.send("Choose an amount from 1 to 100.")
+        return
+    if member:
+        deleted = await ctx.channel.purge(limit=amount + 1, check=lambda message: message.author.id == member.id)
+    else:
+        deleted = await ctx.channel.purge(limit=amount + 1)
+    count = sum(1 for message in deleted if message.id != ctx.message.id)
+    notice = await ctx.send(f"Deleted **{count}** message(s).")
+    await log(ctx.guild, "message_log", "Messages purged", f"{ctx.author.mention} deleted {count} messages in {ctx.channel.mention}.")
+    await notice.delete(delay=5)
+
+
+@bot.command(name="slowmode")
+@commands.has_permissions(manage_channels=True)
+async def prefix_slowmode(ctx: commands.Context, seconds: int):
+    if not 0 <= seconds <= 21600:
+        await ctx.send("Choose a duration from 0 to 21600 seconds.")
+        return
+    await ctx.channel.edit(slowmode_delay=seconds, reason=f"Set by {ctx.author}")
+    await ctx.send(f"Slowmode set to **{seconds} seconds**.")
+    await log(ctx.guild, "channel_log", "Slowmode changed", f"{ctx.author.mention} set slowmode in {ctx.channel.mention} to {seconds}s.")
+
+
+@bot.command(name="lock")
+@commands.has_permissions(manage_channels=True)
+async def prefix_lock(ctx: commands.Context):
+    await ctx.channel.set_permissions(ctx.guild.default_role, send_messages=False, reason=f"Locked by {ctx.author}")
+    await ctx.send("🔒 Channel locked for @everyone.")
+    await log(ctx.guild, "channel_log", "Channel locked", f"{ctx.channel.mention} locked by {ctx.author.mention}.")
+
+
+@bot.command(name="unlock")
+@commands.has_permissions(manage_channels=True)
+async def prefix_unlock(ctx: commands.Context):
+    await ctx.channel.set_permissions(ctx.guild.default_role, send_messages=None, reason=f"Unlocked by {ctx.author}")
+    await ctx.send("🔓 Channel unlocked.")
+    await log(ctx.guild, "channel_log", "Channel unlocked", f"{ctx.channel.mention} unlocked by {ctx.author.mention}.")
+
+
+@bot.command(name="setup-logs")
+@commands.has_permissions(manage_guild=True)
+async def prefix_setup_logs(ctx: commands.Context, category: str, channel: Optional[discord.TextChannel] = None):
+    key = LOG_FIELDS.get(category.lower())
+    if not key:
+        await ctx.send("Choose a category: moderation, messages, members, roles, or channels.")
+        return
+    set_setting(ctx.guild.id, key, channel.id if channel else None)
+    await ctx.send(f"{category.title()} logging {f'will go to {channel.mention}' if channel else 'is disabled'}.")
+
+
+@bot.command(name="logs")
+@commands.has_permissions(manage_guild=True)
+async def prefix_logs(ctx: commands.Context):
+    embed = discord.Embed(title="Vectra log destinations", color=BRAND)
+    for label, key in LOG_FIELDS.items():
+        channel = ctx.guild.get_channel(setting(ctx.guild.id, key) or 0)
+        embed.add_field(name=label.title(), value=channel.mention if channel else "Disabled", inline=True)
+    await ctx.send(embed=embed)
+
+
+@bot.command(name="ticket-panel")
+@commands.has_permissions(manage_guild=True)
+async def prefix_ticket_panel(ctx: commands.Context, category: Optional[discord.CategoryChannel] = None):
+    set_setting(ctx.guild.id, "ticket_category", category.id if category else None)
+    embed = discord.Embed(title="Contact the staff team", description="Press the button below to open a private support channel. Only you and the staff can see it.", color=BRAND)
+    await ctx.send(embed=embed, view=TicketOpenView())
+    await ctx.send("Ticket panel posted.", delete_after=5)
 
 
 @bot.event
@@ -306,17 +557,52 @@ async def ticket_panel(interaction: discord.Interaction, category: Optional[disc
     await ephemeral(interaction, "Ticket panel posted.")
 
 
+async def enforce_invite_filter(message: discord.Message):
+    if message.guild and isinstance(message.author, discord.Member) and not message.author.bot:
+        enabled, timeout_minutes = invite_filter_settings(message.guild.id)
+        author = message.author
+        is_staff = author.id == message.guild.owner_id or author.guild_permissions.administrator or author.guild_permissions.manage_messages or author.guild_permissions.moderate_members
+        if enabled and not is_staff and INVITE_LINK.search(message.content):
+            deleted = False
+            try:
+                await message.delete()
+                deleted = True
+            except discord.NotFound:
+                deleted = True
+            except discord.HTTPException as exc:
+                print(f"Could not delete invite from {author.id}: {exc!r}")
+            reason = f"Posted a Discord invite in #{getattr(message.channel, 'name', 'unknown')}; message deletion {'succeeded' if deleted else 'failed'}"
+            try:
+                await author.timeout(timedelta(minutes=timeout_minutes), reason="Vectra automatic Discord invite filter")
+                reason += f"; timed out for {timeout_minutes} minutes"
+            except discord.HTTPException as exc:
+                reason += f"; timeout failed ({type(exc).__name__})"
+                print(f"Could not timeout invite sender {author.id}: {exc!r}")
+            if bot.user:
+                await moderation_log(message.guild, "Discord invite auto-moderation", author, bot.user, reason)
+
+
+@bot.event
+async def on_message(message: discord.Message):
+    await enforce_invite_filter(message)
+    await bot.process_commands(message)
+
+
 @bot.event
 async def on_message_delete(message: discord.Message):
     if message.guild and not message.author.bot:
-        content = discord.utils.escape_mentions(message.content[:1200] or "[no text]")
+        content = INVITE_LINK.sub("[Discord invite link]", message.content[:1200] or "[no text]")
+        content = discord.utils.escape_mentions(content)
         await log(message.guild, "message_log", "Message deleted", f"**Author:** {message.author.mention}\n**Channel:** {message.channel.mention}\n**Content:** {content}", 0xED5B68)
 
 
 @bot.event
 async def on_message_edit(before: discord.Message, after: discord.Message):
     if before.guild and not before.author.bot and before.content != after.content:
-        await log(before.guild, "message_log", "Message edited", f"**Author:** {before.author.mention}\n**Channel:** {before.channel.mention}\n[Jump to message]({after.jump_url})\n**Before:** {discord.utils.escape_mentions(before.content[:700] or '[empty]')}\n**After:** {discord.utils.escape_mentions(after.content[:700] or '[empty]')}")
+        await enforce_invite_filter(after)
+        before_text = discord.utils.escape_mentions(INVITE_LINK.sub("[Discord invite link]", before.content[:700] or "[empty]"))
+        after_text = discord.utils.escape_mentions(INVITE_LINK.sub("[Discord invite link]", after.content[:700] or "[empty]"))
+        await log(before.guild, "message_log", "Message edited", f"**Author:** {before.author.mention}\n**Channel:** {before.channel.mention}\n[Jump to message]({after.jump_url})\n**Before:** {before_text}\n**After:** {after_text}")
 
 
 @bot.event
@@ -389,6 +675,22 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
     else:
         message = str(error) or "Something went wrong."
     await ephemeral(interaction, message)
+
+
+@bot.event
+async def on_command_error(ctx: commands.Context, error: commands.CommandError):
+    if isinstance(error, commands.CommandNotFound):
+        return
+    if isinstance(error, commands.MissingPermissions):
+        message = "You don't have permission to use this command."
+    elif isinstance(error, (commands.MissingRequiredArgument, commands.BadArgument)):
+        message = f"Check the command format with `!help`. ({error})"
+    elif isinstance(error, commands.CommandInvokeError):
+        print(f"Prefix command error: {error.original!r}")
+        message = f"Action failed: {error.original}" if isinstance(error.original, discord.Forbidden) else "Something went wrong. Check Vectra's role and channel permissions."
+    else:
+        message = "Something went wrong while running that command."
+    await ctx.send(message)
 
 
 if __name__ == "__main__":

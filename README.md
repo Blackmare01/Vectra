@@ -8,6 +8,7 @@ Vectra is a Python moderation and support bot with a static Vercel dashboard. Th
 - Persistent SQLite warning history and per-server configuration.
 - Ticket panels with persistent buttons, private ticket channels, staff access, and close controls.
 - Five independently configurable log destinations: moderation, messages, members, roles, and channels.
+- Optional per-server Discord invite filter that deletes invite links and times out the sender.
 - Logs for edited/deleted messages, member joins/leaves and role changes, role create/update/delete, channel create/update/delete, and moderation actions.
 - Responsive static dashboard with command reference, setup instructions, ticket overview, and a browser-local log-channel preview.
 
@@ -43,10 +44,26 @@ Keep `data/vectra.sqlite3` on persistent storage. It contains warnings and serve
 - Use `/setup-logs` and select a category and destination channel. Categories: moderation, messages, members, roles, and channels. Omit the channel to disable a category.
 - Use `/logs` to review destinations.
 - Run `/ticket-panel` in the channel where members should contact staff; choose an optional ticket category.
+- Enable invite filtering with `/link-filter` or `!linkfilter on 10`. It is off by default; matching invite links are deleted and the sender is timed out for the configured duration. Server owners and members with Manage Messages, Moderate Members, or Administrator are exempt. The filter targets invite URLs (`discord.gg` and `/invite/` links), not ordinary Discord channel links.
 - Place Vectra's role above the roles it needs to moderate. Its ticket flow grants staff access to roles with **Manage Channels**.
 - Configure `Manage Server`, moderation, and channel permissions for the appropriate staff roles.
 
 Slash commands sync on startup. Discord can take a short time to show global commands after first deploy.
+
+## Prefix commands
+
+All moderation, log setup, and ticket panel commands are also available with the `!` prefix. Use `!help` for a short in-server list. Examples:
+
+```text
+!warn @member Please follow the server rules
+!mute @member 30 Please cool off
+!purge 25
+!setup-logs moderation #mod-log
+!ticket-panel
+!linkfilter on 10
+```
+
+Prefix commands require **Message Content Intent** enabled both in this code and in the Discord Developer Portal. The bot currently uses `!` as its prefix.
 
 ## Deploy the dashboard on Vercel
 
