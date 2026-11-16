@@ -26,8 +26,8 @@ Vectra is a Python moderation and support bot with a static Vercel dashboard. Th
 
    ```env
    DISCORD_TOKEN=your_bot_token
-   # Optional; defaults to ./vectra.sqlite3
-   VECTRA_DB_PATH=vectra.sqlite3
+   # Optional; defaults to ./data/vectra.sqlite3
+   VECTRA_DB_PATH=data/vectra.sqlite3
    ```
 
 6. Start the persistent process:
@@ -36,7 +36,7 @@ Vectra is a Python moderation and support bot with a static Vercel dashboard. Th
    python main.py
    ```
 
-Keep `vectra.sqlite3` on persistent storage. It contains warnings and server configuration. Back it up with the host's normal database or disk backup process.
+Keep `data/vectra.sqlite3` on persistent storage. It contains warnings and server configuration. On Inject Cloud, `data/` is a persistent app-data directory; back up the database with the host's normal backup process.
 
 ## Configure a server
 

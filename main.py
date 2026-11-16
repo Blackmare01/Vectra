@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import sqlite3
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Optional
 
 import discord
@@ -13,8 +14,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
-DB_PATH = os.getenv("VECTRA_DB_PATH", "vectra.sqlite3")
+DB_PATH = os.getenv("VECTRA_DB_PATH", "data/vectra.sqlite3")
 BRAND = 0x7867F0
+Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
 
 
 def db():
